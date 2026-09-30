@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mock Inbox · PhishSentinel demo</title>
+<style>
+*{box-sizing:border-box}body{margin:0;font:14px/1.5 system-ui,Segoe UI,sans-serif;background:#f1f5f9;color:#0f172a}
+header{background:#fff;border-bottom:1px solid #e2e8f0;padding:12px 20px;display:flex;gap:12px;align-items:center}
+header b{font-size:16px}.sp{flex:1}a.dash{color:#0891b2;text-decoration:none;font-weight:600}
+.wrap{display:grid;grid-template-columns:340px 1fr;min-height:calc(100vh - 50px)}
+.list{background:#fff;border-right:1px solid #e2e8f0;overflow:auto}
+.item{padding:10px 14px;border-bottom:1px solid #f1f5f9;cursor:pointer}.item:hover,.item.sel{background:#e0f2fe}
+.item b{display:block;font-size:13px}.item span{color:#64748b;font-size:12px}
+.view{padding:24px 32px;max-width:760px}.view h2{margin:0 0 4px}.meta{color:#64748b;margin-bottom:16px}
+.body{background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:18px;white-space:pre-wrap}
+#fallback{display:none;margin-top:14px;background:#0891b2;color:#fff;border:0;border-radius:99px;padding:10px 18px;font-weight:600;cursor:pointer}
+#fbmsg{margin-left:10px;color:#475569}
+</style></head><body>
+<header><b>📬 Corp Mail (mock inbox)</b><span class="sp"></span><a class="dash" href="/" target="_blank">Open triage console →</a></header>
+<div class="wrap"><div class="list" id="list"></div><div class="view" id="view"><p>Select an email, then press <b>Report phishing</b>.</p></div></div>
+<script>
+const MAILS=[
+ {from:"PayPal Support",addr:"security@paypa1-secure.com",subject:"Action required: verify your account",
+  body:'Dear customer, your account will be suspended. Verify now: <a href="https://paypa1-secure.com/verify?id=k3x9">https://paypa1-secure.com/verify</a>'},
+ {from:"Microsoft 365",addr:"no-reply@m1crosoft-verify.xyz",subject:"Your password expires today",
+  body:'Hi, your Microsoft 365 password expires today. Verify now to avoid suspension and log in here: <a href="https://m1crosoft-verify.xyz/login?u=ab12">https://m1crosoft-verify.xyz/login</a>'},
+ {from:"Microsoft 365",addr:"no-reply@m1crosoft-verify.xyz",subject:"Your password expires today (Ravi)",
+  body:'Hi Ravi, your Microsoft 365 password expires today. Verify now to avoid suspension and log in here: <a href="https://m1crosoft-verify.xyz/login?u=cd34">https://m1crosoft-verify.xyz/login</a>'},
+ {from:"HR Department",addr:"hr.dept.vcet@gmail.com",subject:"Update payroll bank details before Friday",
+  body:"Hello, please update your payroll bank details before Friday's salary run. Reply with your account number and bank name."},
+ {from:"PayPal",addr:"alerts@paypal-alerts.top",subject:"Please confirm your recent activity",
+  body:'Please confirm your recent activity: <a href="http://secure-paypal-account.top/login?s=zz9">https://www.paypal.com/verify</a>'},
+ {from:"GitHub",addr:"noreply@github.com",subject:"[GitHub] A new pull request was opened",
+  body:'A pull request was opened. View it: <a href="https://github.com/team/repo/pull/42">https://github.com/team/repo/pull/42</a>'},
+ {from:"HR",addr:"hr@vcet.edu.in",subject:"Holiday notice for Deepavali",
+  body:'The college will remain closed on the festival day. See <a href="https://vcet.edu.in/notice/holiday">https://vcet.edu.in/notice/holiday</a> for details.'},
+ {from:"ShopNow Deals",addr:"deals@shopnow.in",subject:"Last chance: offer ends today",
+  body:'Act now and log in to claim your offer. <a href="https://shopnow.in/sale">https://shopnow.in/sale</a>'},
+];
+const $=id=>document.getElementById(id);let cur=null;
+$('list').innerHTML=MAILS.map((m,i)=>`<div class="item" data-i="${i}"><b>${m.from}</b><span>${m.subject}</span></div>`).join('');
+$('list').onclick=e=>{const it=e.target.closest('.item');if(!it)return;document.querySelectorAll('.item').forEach(x=>x.classList.remove('sel'));it.classList.add('sel');show(+it.dataset.i)};
+function show(i){cur=MAILS[i];
+ $('view').innerHTML=`<h2 data-ps-subject>${cur.subject}</h2>
+  <div class="meta"><span data-ps-sender>${cur.from} &lt;${cur.addr}&gt;</span></div>
+  <div class="body" data-ps-body>${cur.body}</div>
+  <button id="fallback">Report phishing (no extension)</button><span id="fbmsg"></span>`;
+ // The extension marks <html data-ps-ext>. If it is missing, offer a direct button so the page still works.
+ if(!document.documentElement.dataset.psExt) $('fallback').style.display='inline-block';
+ $('fallback').onclick=async()=>{
+  const b=document.querySelector('[data-ps-body]');
+  const r=await fetch('/api/v1/reports',{method:'POST',headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({reporter:'employee@corp.test',sender:`${cur.from} <${cur.addr}>`,subject:cur.subject,text:b.innerText,links:[...b.querySelectorAll('a')].map(a=>a.href)})});
+  $('fbmsg').textContent=r.ok?'Reported. Check the triage console.':'Failed ('+r.status+')';};
+}
+</script></body></html>

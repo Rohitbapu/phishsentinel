@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PhishSentinel · Triage Console</title>
+<style>
+:root{--bg:#0b1020;--card:#121a33;--line:#243056;--txt:#e6ecff;--mut:#8fa0cf;--cy:#22d3ee;--red:#f87171;--grn:#4ade80;--amb:#fbbf24}
+*{box-sizing:border-box}body{margin:0;font:14px/1.45 system-ui,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--txt)}
+header{display:flex;align-items:center;gap:16px;padding:12px 20px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+h1{font-size:18px;margin:0}h1 span{color:var(--cy)}.sp{flex:1}
+.grid{display:grid;grid-template-columns:repeat(7,1fr);gap:10px;padding:14px 20px}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.stat b{display:block;font-size:22px}.stat small{color:var(--mut)}
+main{display:grid;grid-template-columns:1.5fr 1fr;gap:14px;padding:0 20px 20px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:14px}
+h2{font-size:13px;margin:0 0 8px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em}
+table{width:100%;border-collapse:collapse}th,td{padding:6px 8px;text-align:left;border-bottom:1px solid var(--line);font-size:12.5px}
+tr.row{cursor:pointer}tr.row:hover,tr.sel{background:#1a2547}
+.badge{padding:2px 8px;border-radius:99px;font-size:11.5px;font-weight:600}
+.phishing{background:#7f1d1d;color:#fecaca}.benign{background:#14532d;color:#bbf7d0}.needs_review{background:#78350f;color:#fde68a}.queued{background:#334155;color:#cbd5e1}
+textarea,input[type=text]{width:100%;background:#0b1226;color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:8px}
+button{background:var(--cy);color:#04222b;border:0;border-radius:8px;padding:6px 12px;font-weight:600;cursor:pointer}
+button.alt{background:#1e2a52;color:var(--txt)}button.red{background:var(--red);color:#2b0505}button.grn{background:var(--grn);color:#052b12}
+.ev{border:1px solid var(--line);border-radius:8px;padding:6px 8px;margin:5px 0}.ev b{color:var(--cy)}
+.bar{height:5px;border-radius:3px;background:var(--red);margin-top:4px}.bar.neg{background:var(--grn)}
+pre{white-space:pre-wrap;background:#0b1226;border:1px solid var(--line);border-radius:8px;padding:8px;max-height:150px;overflow:auto;font-size:12px}
+.fun{display:flex;align-items:center;gap:10px;margin:4px 0}.fun span.l{width:150px;color:var(--mut);font-size:12px}.fun .b{height:14px;border-radius:4px;min-width:2px}.fun span.n{font-size:12px}
+.aud{font-size:12px;color:var(--mut);border-left:2px solid var(--line);padding-left:8px;margin:3px 0}
+.row2{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.mut{color:var(--mut)}
+@media(max-width:1000px){main{grid-template-columns:1fr}.grid{grid-template-columns:repeat(3,1fr)}}
+</style></head><body>
+<header><h1>Phish<span>Sentinel</span> · Triage Console</h1><div class="sp"></div><span id="err" style="color:var(--red)"></span><a href="/inbox" target="_blank" style="color:var(--cy);text-decoration:none;font-weight:600">Mock inbox ↗</a>
+<label><input type="checkbox" id="auto" checked> Autonomy ON (kill switch)</label></header>
+<div class="grid" id="stats"></div>
+<div class="card" style="margin:0 20px 14px"><h2>Tier funnel · where each report was resolved</h2><div id="funnel"></div></div>
+<main><div>
+ <div class="card"><h2>Report an email</h2>
+  <textarea id="paste" rows="5" placeholder="Paste the email text (include the sender line, e.g. From: Name &lt;a@b.com&gt;) or upload a .eml file"></textarea>
+  <div class="row2"><input type="file" id="file" accept=".eml"><input type="text" id="reporter" value="analyst@corp.test" style="max-width:220px">
+  <button id="send">Submit for triage</button><span id="msg" class="mut"></span></div></div>
+ <div class="card"><h2>Triage queue (newest first)</h2>
+  <table><thead><tr><th>#</th><th>Subject</th><th>Sender</th><th>Verdict</th><th>Conf.</th><th>Tier</th><th>Status</th><th>Camp.</th></tr></thead><tbody id="q"></tbody></table></div>
+</div><div>
+ <div class="card" id="case"><h2>Case file</h2><span class="mut">Click a report to open its evidence.</span></div>
+ <div class="card"><h2>Campaigns</h2><table><thead><tr><th>#</th><th>Label</th><th>Reports</th><th>Quar.</th><th></th></tr></thead><tbody id="camps"></tbody></table></div>
+</div></main>
+<script>
+const KEY=new URLSearchParams(location.search).get('key')||'';
+const H={'Content-Type':'application/json',...(KEY?{'x-api-key':KEY}:{})};
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const api=(p,o={})=>fetch('/api/v1'+p,{headers:H,...o}).then(r=>r.ok?r.json():Promise.reject(r.status));
+const post=(p,b)=>api(p,{method:'POST',body:JSON.stringify(b||{})});
+let sel=null;
+const badge=v=>`<span class="badge ${esc(v||'queued')}">${esc((v||'queued').replace('_',' '))}</span>`;
+const TN={0:'T0',1:'T1',2:'T2',3:'Human'};
+
+async function refresh(){
+ try{
+  const [s,q,c]=await Promise.all([api('/stats'),api('/reports?limit=60'),api('/campaigns')]);
+  const box=(v,l)=>`<div class="stat"><b>${esc(v)}</b><small>${esc(l)}</small></div>`;
+  $('stats').innerHTML=box(s.total,'Reports')+box(s.tier0,'Tier 0 · rules')+box(s.tier1,'Tier 1 · score')+box(s.tier2,'Tier 2 · investigated')+box(s.human,'To analyst')+box(s.campaigns,'Campaigns')+box(s.compression+'×','Reports per campaign');
+  const fmax=Math.max(1,s.tier0,s.tier1,s.tier2,s.human),fr=(l,n,c)=>`<div class="fun"><span class="l">${l}</span><div class="b" style="width:${Math.round(n/fmax*55)}%;background:${c}"></div><span class="n">${n}${s.total?' · '+Math.round(n/s.total*100)+'%':''}</span></div>`;
+  $('funnel').innerHTML=fr('Tier 0 · fast rules',s.tier0,'#22d3ee')+fr('Tier 1 · score',s.tier1,'#38bdf8')+fr('Tier 2 · investigated',s.tier2,'#fbbf24')+fr('Human analyst',s.human,'#f87171');
+  $('err').textContent='';
+  $('auto').checked=s.autonomy;
+  $('q').innerHTML=q.map(r=>`<tr class="row ${r.id===sel?'sel':''}" data-id="${r.id}"><td>${r.id}</td><td>${esc((r.subject||'').slice(0,42))}</td><td>${esc((r.sender||'').slice(0,30))}</td><td>${badge(r.verdict)}</td><td>${r.confidence!=null?Math.round(r.confidence*100)+'%':''}</td><td>${TN[r.tier_resolved]??''}</td><td>${esc(r.status)}</td><td>${r.campaign_id??''}</td></tr>`).join('');
+  $('camps').innerHTML=c.map(x=>`<tr><td>${x.id}</td><td>${esc(x.label)}<br><small class="mut">${esc(x.domains.join(', '))}</small></td><td>${x.size}</td><td>${x.quarantined}</td><td><button class="red" data-camp="${x.id}">Quarantine all</button></td></tr>`).join('');
+  if(sel) loadCase(sel).catch(()=>{});
+ }catch(e){$('err').textContent='Server unreachable or key missing ('+e+')'}
+}
+
+async function loadCase(id){
+ sel=id; const r=await api('/reports/'+id);
+ const aud=(r.audit||[]).map(a=>`<div class="aud">${new Date(a.ts*1000).toLocaleTimeString()} · <b>${esc(a.event)}</b> ${esc(a.detail)}</div>`).join('');
+ const ev=(r.evidence||[]).slice().sort((a,b)=>Math.abs(b.weight)-Math.abs(a.weight)).map(e=>`<div class="ev"><b>${esc(e.agent)}</b> · ${esc(e.signal)} <span class="mut">(${e.weight>0?'+':''}${e.weight})</span><br>${esc(e.detail)}<div class="bar ${e.weight<0?'neg':''}" style="width:${Math.min(100,Math.abs(e.weight)*25)}%"></div></div>`).join('');
+ $('case').innerHTML=`<h2>Case file #${r.id}</h2><div><b>${esc(r.subject)}</b><br><span class="mut">${esc(r.sender)} · reported by ${esc(r.reporter)}${r.vip?' · <b style="color:var(--amb)">VIP</b>':''}</span></div>
+ <div class="row2">${badge(r.verdict)} <span>${r.confidence!=null?Math.round(r.confidence*100)+'% confidence':''}</span> <span class="mut">${esc(r.status)}${r.quarantined?' · quarantined':''}</span></div>
+ <p>${esc(r.rationale)}</p>${r.explanation?`<div class="ev" style="border-color:var(--cy)"><b>AI case note</b> <span class="mut">(local model, sees evidence only)</span><br>${esc(r.explanation)}</div>`:''}<h2>Evidence (logit points)</h2>${ev||'<span class="mut">None yet</span>'}
+ <h2 style="margin-top:10px">Message</h2><pre>${esc(r.body)}</pre>
+ <h2 style="margin-top:10px">Audit trail</h2>${aud||'<span class="mut">Empty</span>'}
+ <div class="row2"><button class="red" data-act="feedback:phishing">Confirm phishing</button><button class="grn" data-act="feedback:benign">Confirm benign</button><button class="alt" data-act="undo">Undo last action</button></div>`;
+}
+
+$('q').onclick=e=>{const tr=e.target.closest('tr.row');if(tr)loadCase(+tr.dataset.id)};
+$('camps').onclick=async e=>{const b=e.target.closest('[data-camp]');if(b){try{await post('/campaigns/'+b.dataset.camp+'/quarantine')}catch(err){$('err').textContent='Failed ('+err+')'}refresh()}};
+$('case').onclick=async e=>{const b=e.target.closest('[data-act]');if(!b||!sel)return;const [a,l]=b.dataset.act.split(':');
+ try{if(a==='feedback')await post('/reports/'+sel+'/feedback',{label:l});else await post('/actions/'+sel+'/undo')}catch(e){$('err').textContent='Action failed ('+e+')'}refresh()};
+$('auto').onchange=e=>post('/settings/autonomy',{enabled:e.target.checked}).then(refresh);
+$('send').onclick=async()=>{
+ const f=$('file').files[0],t=$('paste').value.trim(),rep=$('reporter').value||'anonymous';
+ try{
+  if(f){const buf=new Uint8Array(await f.arrayBuffer());let s='';buf.forEach(b=>s+=String.fromCharCode(b));await post('/reports',{reporter:rep,raw_eml:btoa(s)})}
+  else if(t){const m=t.match(/^From:\s*(.+)$/mi),j=t.match(/^Subject:\s*(.+)$/mi);await post('/reports',{reporter:rep,text:t,sender:m?m[1]:'',subject:j?j[1]:''})}
+  else{$('msg').textContent='Paste text or choose a .eml file';return}
+  $('msg').textContent='Queued for triage';$('paste').value='';$('file').value='';setTimeout(refresh,600);
+ }catch(e){$('msg').textContent='Failed: '+e}
+};
+refresh();setInterval(refresh,2000);
+</script></body></html>
